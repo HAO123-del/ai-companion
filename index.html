@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>EVE OS (移动端修复版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
+    
+    <style>
+        /* 1. 修复高度问题 */
+        body { margin: 0; background: #000; color: white; font-family: -apple-system, sans-serif; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; user-select: none; }
+        
+        .header { text-align: center; padding-top: 30px; }
+        .time { font-size: 60px; font-weight: 200; }
+        
+        .avatar-box { flex: 1; display: flex; justify-content: center; align-items: center; }
+        .avatar { width: 150px; height: 150px; border-radius: 50%; border: 3px solid #333; object-fit: cover; transition: 0.3s; }
+        .avatar.speaking { border-color: #0A84FF; box-shadow: 0 0 60px rgba(10,132,255,0.6); transform: scale(1.1); }
+        
+        .status-box { text-align: center; height: 60px; }
+        #status-text { color: #0A84FF; font-size: 16px; font-weight: bold; }
+        #subtitle { color: #666; font-size: 12px; margin-top: 5px; }
+
+        /* 2. 增加底部边距，防止被 Dock 挡住 */
+        .control-area { height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; margin-bottom: 90px; }
+        .mic-btn {
+            width: 80px; height: 80px; background: #1c1c1e; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 35px; border: 2px solid #333; cursor: pointer; transition: 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mic-btn:active { transform: scale(0.9); }
+        .mic-btn.listening { background: #FF3B30; border-color: #FF3B30; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% {transform: scale(1);} 50% {transform: scale(1.1);} 100% {transform: scale(1);} }
+
+        /* 3. 修复 Dock：固定底部 + 适配 iPhone 安全区 */
+        .dock { 
+            height: 70px; 
+            background: rgba(5, 5, 5, 0.95); /*稍微透明一点*/
+            backdrop-filter: blur(10px); /* 毛玻璃特效 */
+            border-top: 1px solid #222; 
+            display: flex; 
+            justify-content: space-around; 
+            align-items: center;
+            
+            /* 强制固定 */
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            z-index: 99;
+            padding-bottom: env(safe-area-inset-bottom); /* 适配全面屏 */
+        }
+        .dock-item { color: #666; font-size: 10px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px; cursor: pointer; }
+        .dock-item.active { color: #0A84FF; }
+        .dock-icon { font-size: 20px; }
+
+        /* 弹窗层 */
+        .layer { 
+            position: absolute; top:0; left:0; width:100%; height:100%; 
+            background: #000; z-index: 100; transform: translateY(100%); transition: 0.3s;
+            padding: 20px; box-sizing: border-box; display: flex; flex-direction: column;
+        }
+        .layer.show { transform: translateY(0); }
+        
+        input, textarea { width: 100%; padding: 12px; background: #222; border: 1px solid #333; color: white; border-radius: 8px; margin-bottom: 15px; box-sizing: border-box; }
+        label { color: #888; font-size: 12px; margin-bottom: 5px; display: block; }
+        .btn { width: 100%; padding: 12px; background: #0A84FF; border: none; color: white; border-radius: 8px; font-weight: bold; margin-top: 10px; }
+        .btn-close { background: #333; margin-top: 10px; }
+        .switch-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: #222; padding: 10px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+    <div class="header"><div class="time" id="clock">--:--</div></div>
+
+    <div class="avatar-box">
+        <img src="https://api.dicebear.com/7.x/bottts/svg?seed=EVE" class="avatar" id="avatar">
+    </div>
+
+    <div class="status-box">
+        <div id="status-text">EVE OS</div>
+        <div id="subtitle">UI 修复版</div>
+    </div>
+
+    <div class="control-area">
+        <div class="mic-btn" id="micBtn">🎤</div>
+        <div style="margin-top:15px; color:#444; font-size:12px;">点击说话 / 停止</div>
+    </div>
+
+    <div class="dock">
+        <div class="dock-item" onclick="openLayer('musicLayer')">
+            <span class="dock-icon">🎵</span>陪听
+        </div>
+        <div class="dock-item" onclick="openLayer('readLayer')">
+            <span class="dock-icon">📖</span>共读
+        </div>
+        <div class="dock-item" onclick="openLayer('settingsLayer')">
+            <span class="dock-icon">⚙️</span>设置
+        </div>
+    </div>
+
+    <div class="layer" id="musicLayer">
+        <h2>🎵 音乐陪听</h2>
+        <input id="music-input" placeholder="输入歌名 (如: 七里香)">
+        <button class="btn" onclick="handleScene('music')">开始点评</button>
+        <button class="btn btn-close" onclick="closeLayer('musicLayer')">关闭</button>
+    </div>
+
+    <div class="layer" id="readLayer">
+        <h2>📖 沉浸共读</h2>
+        <textarea id="read-input" placeholder="粘贴要朗读的文字..." style="height:150px;"></textarea>
+        <button class="btn" onclick="handleScene('read')">朗读</button>
+        <button class="btn btn-close" onclick="closeLayer('readLayer')">关闭</button>
+    </div>
+
+    <div class="layer" id="settingsLayer">
+        <h2>🔧 系统配置</h2>
+        <div style="flex:1; overflow-y:auto;">
+            <label>Azure Speech Key (必填)</label>
+            <input id="key-azure" type="password">
+            <label>Azure Region (必填)</label>
+            <input id="key-region" placeholder="eastasia">
+            
+            <label>LLM API Key (DeepSeek)</label>
+            <input id="key-llm" type="password">
+            
+            <div class="switch-row">
+                <span style="font-size:14px;">启用克隆音色 (Minimax)</span>
+                <input type="checkbox" id="use-clone" style="width:auto;">
+            </div>
+            
+            <label>Minimax Key (选填)</label>
+            <input id="key-minimax" type="password">
+            <label>Minimax Group ID (选填)</label>
+            <input id="key-group">
+        </div>
+        <button class="btn" onclick="saveConfig()">保存配置</button>
+        <button class="btn btn-close" onclick="closeLayer('settingsLayer')">关闭</button>
+    </div>
+
+<script>
+    let config = {};
+    let recognizer;
+    let isListening = false;
+    
+    const PROMPTS = {
+        chat: "你是一个机智、幽默的AI助手EVE。请用口语化、简短的中文回复(30字以内)。",
+        music: "你是一个资深乐评人。用户会发给你歌名，请用感性、专业的角度简短点评这首歌。",
+        read: "你是一个深情的朗读者。请先朗读用户发来的这段文字，然后在最后加一句简短的感悟。"
+    };
+
+    window.onload = () => {
+        setInterval(() => document.getElementById('clock').innerText = new Date().toLocaleTimeString('en-US', {hour12:false,hour:'2-digit',minute:'2-digit'}), 1000);
+        loadConfig();
+        document.getElementById('micBtn').onclick = toggleListen;
+    };
+
+    function openLayer(id) { document.getElementById(id).classList.add('show'); }
+    function closeLayer(id) { document.getElementById(id).classList.remove('show'); }
+
+    function loadConfig() {
+        const saved = localStorage.getItem('eve_mobile_full_cfg');
+        if(saved) {
+            config = JSON.parse(saved);
+            document.getElementById('key-azure').value = config.azureKey || '';
+            document.getElementById('key-region').value = config.azureRegion || '';
+            document.getElementById('key-llm').value = config.llmKey || '';
+            document.getElementById('use-clone').checked = config.useClone || false;
+            document.getElementById('key-minimax').value = config.minimaxKey || '';
+            document.getElementById('key-group').value = config.minimaxGroup || '';
+        }
+    }
+
+    function saveConfig() {
+        config = {
+            azureKey: document.getElementById('key-azure').value,
+            azureRegion: document.getElementById('key-region').value,
+            llmKey: document.getElementById('key-llm').value,
+            useClone: document.getElementById('use-clone').checked,
+            minimaxKey: document.getElementById('key-minimax').value,
+            minimaxGroup: document.getElementById('key-group').value
+        };
+        localStorage.setItem('eve_mobile_full_cfg', JSON.stringify(config));
+        closeLayer('settingsLayer');
+        setStatus("配置已保存");
+    }
+
+    function setStatus(main, sub="") {
+        document.getElementById('status-text').innerText = main;
+        document.getElementById('subtitle').innerText = sub;
+    }
+
+    function toggleListen() {
+        if(!config.azureKey) return openLayer('settingsLayer');
+        if(isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    }
+
+    function startListening() {
+        const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(config.azureKey, config.azureRegion);
+        speechConfig.speechRecognitionLanguage = "zh-CN";
+        const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+        recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+        
+        recognizer.recognizing = (s, e) => setStatus("正在聆听...", e.result.text);
+        
+        recognizer.recognized = async (s, e) => {
+            if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
+                const text = e.result.text;
+                stopListening();
+                await processBrain(text, 'chat');
+            }
+        };
+        
+        recognizer.startContinuousRecognitionAsync();
+        isListening = true;
+        document.getElementById('micBtn').classList.add('listening');
+        setStatus("请说话...");
+    }
+
+    function stopListening() {
+        if(recognizer) { recognizer.stopContinuousRecognitionAsync(); recognizer.close(); recognizer = undefined; }
+        isListening = false;
+        document.getElementById('micBtn').classList.remove('listening');
+    }
+
+    async function handleScene(scene) {
+        const inputId = scene === 'music' ? 'music-input' : 'read-input';
+        const text = document.getElementById(inputId).value;
+        if(!text) return alert("请输入内容");
+        closeLayer(scene+'Layer');
+        await processBrain(text, scene);
+    }
+
+    async function processBrain(text, scene) {
+        setStatus("思考中...", text);
+        try {
+            const res = await fetch("https://api.deepseek.com/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.llmKey}` },
+                body: JSON.stringify({
+                    model: "deepseek-chat",
+                    messages: [
+                        {"role": "system", "content": PROMPTS[scene]},
+                        {"role": "user", "content": text}
+                    ],
+                    stream: false
+                })
+            });
+            const data = await res.json();
+            const reply = data.choices[0].message.content;
+            setStatus("正在回复...", reply);
+            
+            if(config.useClone && config.minimaxKey) {
+                await speakMinimax(reply);
+            } else {
+                await speakAzure(reply);
+            }
+        } catch(e) {
+            setStatus("大脑连接失败", "请检查LLM Key");
+            alert(e);
+        }
+    }
+
+    function speakAzure(text) {
+        const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(config.azureKey, config.azureRegion);
+        speechConfig.speechSynthesisVoiceName = "zh-CN-XiaoxiaoNeural";
+        const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig);
+        document.getElementById('avatar').classList.add('speaking');
+        synthesizer.speakTextAsync(text, result => {
+            document.getElementById('avatar').classList.remove('speaking');
+            setStatus("就绪");
+            synthesizer.close();
+        });
+    }
+
+    async function speakMinimax(text) {
+        setStatus("克隆生成中...");
+        try {
+            const res = await fetch(`https://api.minimax.chat/v1/t2a_v2?GroupId=${config.minimaxGroup}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${config.minimaxKey}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: "speech-01-turbo",
+                    text: text,
+                    stream: false,
+                    voice_setting: { voice_id: "female-tianmei", speed: 1.0, vol: 1.0 }
+                })
+            });
+            
+            const data = await res.json();
+            if(data.base64_audio) {
+                const audio = new Audio("data:audio/mp3;base64," + data.base64_audio);
+                document.getElementById('avatar').classList.add('speaking');
+                audio.play();
+                audio.onended = () => {
+                    document.getElementById('avatar').classList.remove('speaking');
+                    setStatus("就绪");
+                };
+            } else {
+                throw new Error("Minimax未返回音频");
+            }
+        } catch(e) {
+            console.error(e);
+            setStatus("克隆失败", "自动切回Azure");
+            speakAzure(text); 
+        }
+    }
+</script>
+</body>
+</html>
