@@ -1,13 +1,16 @@
 // API Configuration
 // In development: uses localhost
-// In production: uses environment variable VITE_API_URL
+// In production: uses the deployed backend URL
 
 const isDev = import.meta.env.DEV
+
+// Production backend URL - update this when backend URL changes
+const PRODUCTION_API_URL = 'https://ai-companion-api-ncrj.onrender.com'
 
 // API base URL (without /api suffix)
 export const API_BASE = isDev 
   ? 'http://localhost:8000' 
-  : (import.meta.env.VITE_API_URL || window.location.origin)
+  : PRODUCTION_API_URL
 
 // WebSocket base URL
 export const WS_BASE = isDev
